@@ -1,0 +1,4 @@
+interface:
+  display_name: "父亲"
+  short_description: "把任意词汇、概念和现象上提成更深的父概念答案与谱系"
+  default_prompt: "Use $z-father-concept to find the parent concept behind my word."
