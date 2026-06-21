@@ -10,7 +10,7 @@
     {
       "id": 2,
       "prompt": "这个 B 站视频帮我保存到本地：https://www.bilibili.com/video/BV1xx411c7mD",
-      "expected_output": "使用 z-video-downloader 调用 yt-dlp 下载 Bilibili 视频；若遇到 412 或登录限制，提示并使用 --browser-cookies chrome 重试。",
+      "expected_output": "使用 z-video-downloader 调用 yt-dlp 下载 Bilibili 视频；若遇到 412 或登录限制，提示并使用 --cookies-file cookies/cookies.txt 重试。",
       "files": []
     },
     {

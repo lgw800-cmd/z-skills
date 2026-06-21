@@ -451,6 +451,7 @@ def build_ytdlp_cmd(
     ytdlp: Path,
     quality: str,
     max_video_mb: float,
+    cookies_file: str = "",
     browser_cookies: str = "",
     playlist: bool = False,
     write_info_json: bool = True,
@@ -481,7 +482,9 @@ def build_ytdlp_cmd(
         cmd.insert(1, "--yes-playlist")
     else:
         cmd.insert(1, "--no-playlist")
-    if browser_cookies:
+    if cookies_file:
+        cmd[1:1] = ["--cookies", str(Path(cookies_file).expanduser())]
+    elif browser_cookies:
         cmd[1:1] = ["--cookies-from-browser", browser_cookies]
     return cmd
 
@@ -530,6 +533,7 @@ def download_with_ytdlp(
     ytdlp: Path,
     quality: str,
     max_video_mb: float,
+    cookies_file: str = "",
     browser_cookies: str = "",
     playlist: bool = False,
     timeout: int = 3600,
@@ -542,6 +546,7 @@ def download_with_ytdlp(
         ytdlp=ytdlp,
         quality=quality,
         max_video_mb=max_video_mb,
+        cookies_file=cookies_file,
         browser_cookies=browser_cookies,
         playlist=playlist,
     )
@@ -569,8 +574,8 @@ def download_with_ytdlp(
 
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()
         record["note"] = (tail[-1] if tail else f"yt-dlp-exit-{proc.returncode}")[:300]
-        if likely_cookie_fix(record["note"]) and not browser_cookies:
-            record["note"] += " | 可用 --browser-cookies chrome 重试"
+        if likely_cookie_fix(record["note"]) and not (cookies_file or browser_cookies):
+            record["note"] += " | 可用 --cookies-file cookies.txt 重试"
         return record
     except subprocess.TimeoutExpired:
         record["note"] = f"yt-dlp-timeout-{timeout}s"
@@ -588,6 +593,7 @@ def download_one(
     ytdlp: Path | None,
     quality: str,
     max_video_mb: float,
+    cookies_file: str,
     browser_cookies: str,
     playlist: bool,
     prefer_ytdlp: bool,
@@ -616,6 +622,7 @@ def download_one(
         ytdlp=ytdlp,
         quality=quality,
         max_video_mb=max_video_mb,
+        cookies_file=cookies_file,
         browser_cookies=browser_cookies,
         playlist=playlist,
         timeout=timeout,
@@ -699,6 +706,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--title", default="", help="Run title used in output folder name")
     parser.add_argument("--quality", default="1080", help="Max video height, e.g. 720/1080, or best")
     parser.add_argument("--max-video-mb", type=float, default=2000.0, help="Per video size limit")
+    parser.add_argument("--cookies-file", default="", help="Read cookies from a Netscape cookies.txt file")
     parser.add_argument("--browser-cookies", default="", help="Read cookies from browser: chrome/safari/edge/firefox")
     parser.add_argument("--playlist", action="store_true", help="Allow playlist downloads")
     parser.add_argument("--prefer-ytdlp", action="store_true", help="Use yt-dlp even for direct video URLs")
@@ -735,6 +743,7 @@ def main(argv: list[str] | None = None) -> int:
             ytdlp=ytdlp,
             quality=args.quality,
             max_video_mb=args.max_video_mb,
+            cookies_file=args.cookies_file,
             browser_cookies=args.browser_cookies,
             playlist=args.playlist,
             prefer_ytdlp=args.prefer_ytdlp,

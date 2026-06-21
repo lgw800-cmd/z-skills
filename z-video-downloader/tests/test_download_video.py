@@ -102,7 +102,7 @@ class DownloadVideoTests(unittest.TestCase):
         self.assertEqual(download_video.youtube_video_id("https://www.youtube.com/shorts/v1wZwxY3CMg"), "v1wZwxY3CMg")
         self.assertEqual(download_video.youtube_video_id("https://example.com/watch?v=v1wZwxY3CMg"), "")
 
-    def test_build_ytdlp_cmd_defaults_to_single_video_1080(self):
+    def test_build_ytdlp_cmd_supports_browser_cookies_when_explicit(self):
         cmd = download_video.build_ytdlp_cmd(
             "https://www.youtube.com/watch?v=BaW_jenozKc",
             Path("/tmp/out"),
@@ -118,6 +118,22 @@ class DownloadVideoTests(unittest.TestCase):
         self.assertIn("bv*[height<=1080]+ba/b[height<=1080]/b", cmd)
         self.assertIn("--merge-output-format", cmd)
         self.assertIn("mp4", cmd)
+
+    def test_build_ytdlp_cmd_prefers_cookies_file(self):
+        cmd = download_video.build_ytdlp_cmd(
+            "https://www.youtube.com/watch?v=BaW_jenozKc",
+            Path("/tmp/out"),
+            ytdlp=Path("/opt/ytdlp"),
+            quality="1080",
+            max_video_mb=500,
+            cookies_file="/tmp/cookies.txt",
+            browser_cookies="chrome",
+            playlist=False,
+        )
+        self.assertIn("--cookies", cmd)
+        self.assertIn("/tmp/cookies.txt", cmd)
+        self.assertNotIn("--cookies-from-browser", cmd)
+        self.assertNotIn("chrome", cmd)
 
     def test_direct_download_from_local_http_server(self):
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as out_dir:
