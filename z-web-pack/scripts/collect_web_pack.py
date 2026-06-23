@@ -40,8 +40,33 @@ except ImportError:
 
 from bs4 import BeautifulSoup, Tag
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-BASE_SCRIPT = PROJECT_ROOT / ".agent/skills/1-web-research-pack/scripts/collect_web_research_pack.py"
+THIS_SCRIPT = Path(__file__).resolve()
+
+
+def find_base_script() -> Path:
+    candidates = [
+        THIS_SCRIPT.with_name("collect_web_research_pack.py"),
+    ]
+    for parent in THIS_SCRIPT.parents:
+        candidates.append(
+            parent / ".agent/skills/1-web-research-pack/scripts/collect_web_research_pack.py"
+        )
+        candidates.append(
+            parent / "1-web-research-pack/scripts/collect_web_research_pack.py"
+        )
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
+    searched = "\n".join(f"- {candidate}" for candidate in candidates)
+    raise RuntimeError(f"Cannot find base collector. Searched:\n{searched}")
+
+
+BASE_SCRIPT = find_base_script()
 
 spec = importlib.util.spec_from_file_location("web_research_pack_base", BASE_SCRIPT)
 if spec is None or spec.loader is None:
