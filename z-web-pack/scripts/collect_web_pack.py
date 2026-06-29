@@ -4,11 +4,11 @@
 相对基础版的增强点：
 - 图片：srcset 选最大档、懒加载属性全覆盖、picture>source、Referer 防盗链、
   magic-bytes 纠正扩展名、内容 hash 去重、跳过 tracking 像素与装饰图标
-- 视频：<video>/<source>/正文直链 mp4 等流式下载（--videos direct 默认开启）；
-  YouTube/B站/Vimeo/X/抖音等平台页与 m3u8 可用 yt-dlp 下载（--videos all）
+- 视频：只识别 <video>/<source>/正文直链 mp4、平台页与 m3u8，写入媒体清单；
+  下载交给 z-video-downloader
 - GitHub：repo 链接优先 GitHub API 取 README，blob 链接转 raw，真正兑现 SKILL 承诺
 - 兜底：直抓失败或正文弱时使用 r.jina.ai（继承原逻辑）
-- 新增 04-media-inventory.md 媒体清单
+- 新增 04-media-inventory.md 媒体链接清单
 
 依赖 readability-lxml，请用 miniconda python 运行：
   /Users/zz/miniconda3/bin/python3 collect_web_pack.py ...
@@ -20,8 +20,6 @@ import datetime as dt
 import hashlib
 import importlib.util
 import re
-import shutil
-import subprocess
 import sys
 import time
 from collections import deque
@@ -80,13 +78,9 @@ spec.loader.exec_module(base)
 
 FORCE_ROOTS: set[str] = set()
 ORIGINAL_SHOULD_SKIP = base.should_skip_url
-VIDEOS_MODE = "direct"            # off | direct | all
-MAX_VIDEO_MB = 300.0
 MAX_IMAGE_MB = 20.0
 IMAGE_HASHES: dict[str, str] = {}     # sha256 -> local_path（跨页面去重）
-VIDEO_SEEN: set[str] = set()
-VIDEO_COUNTER = [0]
-BROWSER_COOKIES = [""]               # yt-dlp --cookies-from-browser 的浏览器名
+VIDEO_LINKS_SEEN: set[str] = set()
 CURRENT_PAGE_VIDEOS: list[str] = []   # 由 patched _extract_article_soup 填充
 
 VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".m4v", ".mkv", ".flv", ".ogv"}
@@ -306,7 +300,7 @@ def patched_download_image(
 base.download_image = patched_download_image
 
 
-# ---------------------------------------------------------------- 视频收集与下载
+# ---------------------------------------------------------------- 视频链接发现
 
 def collect_videos_from_html(html: str, final_url: str) -> list[str]:
     urls: list[str] = []
@@ -349,118 +343,31 @@ def patched_extract_article_soup(html: str, final_url: str):
 base._extract_article_soup = patched_extract_article_soup
 
 
-def yt_dlp_available() -> bool:
-    return shutil.which("yt-dlp") is not None
+def classify_video_url(url: str) -> str:
+    if Path(urlparse(url).path).suffix.lower() in VIDEO_EXTENSIONS:
+        return "direct"
+    if PLATFORM_VIDEO_RE.search(url):
+        return "platform"
+    return "video-link"
 
 
-def download_direct_video(session: requests.Session, url: str, page_url: str,
-                          assets_dir: Path) -> dict:
-    record = {"url": url, "kind": "direct", "status": "failed", "local_path": ""}
-    try:
-        response = session.get(url, timeout=30, stream=True,
-                               headers={"Referer": page_url})
-        response.raise_for_status()
-        limit = int(MAX_VIDEO_MB * 1024 * 1024)
-        length = response.headers.get("Content-Length")
-        if length and int(length) > limit:
-            record["error"] = f"video-larger-than-{MAX_VIDEO_MB}MB"
-            return record
-        VIDEO_COUNTER[0] += 1
-        ext = Path(urlparse(url).path).suffix.lower() or ".mp4"
-        stem = base.slugify(Path(urlparse(url).path).stem or "video", "video", 40)
-        filename = f"video-{VIDEO_COUNTER[0]:02d}-{stem}{ext}"
-        target = assets_dir / filename
-        size = 0
-        with open(target, "wb") as handle:
-            for chunk in response.iter_content(1024 * 256):
-                size += len(chunk)
-                if size > limit:
-                    handle.close()
-                    target.unlink(missing_ok=True)
-                    record["error"] = f"video-larger-than-{MAX_VIDEO_MB}MB"
-                    return record
-                handle.write(chunk)
-        record["status"] = "ok"
-        record["local_path"] = f"assets/{filename}"
-        record["bytes"] = size
-        return record
-    except Exception as exc:
-        record["error"] = str(exc)[:200]
-        return record
-
-
-def download_platform_video(url: str, assets_dir: Path) -> dict:
-    record = {"url": url, "kind": "platform", "status": "failed", "local_path": ""}
-    if not yt_dlp_available():
-        record["error"] = "yt-dlp-not-installed"
-        return record
-    VIDEO_COUNTER[0] += 1
-    template = str(assets_dir / f"video-{VIDEO_COUNTER[0]:02d}-%(title).50s.%(ext)s")
-    cmd = [
-        "yt-dlp", "--no-playlist", "--no-progress", "--restrict-filenames",
-        "--max-filesize", f"{int(MAX_VIDEO_MB)}M",
-        "-f", "bv*[height<=1080]+ba/b[height<=1080]/b",
-        "--merge-output-format", "mp4",
-        "-o", template, url,
-    ]
-    if BROWSER_COOKIES[0]:
-        cmd[1:1] = ["--cookies-from-browser", BROWSER_COOKIES[0]]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
-        produced = sorted(assets_dir.glob(f"video-{VIDEO_COUNTER[0]:02d}-*"))
-        if proc.returncode == 0 and produced:
-            record["status"] = "ok"
-            record["local_path"] = f"assets/{produced[0].name}"
-            record["bytes"] = produced[0].stat().st_size
-        else:
-            tail = (proc.stderr or proc.stdout or "").strip().splitlines()
-            record["error"] = (tail[-1] if tail else f"yt-dlp-exit-{proc.returncode}")[:200]
-        return record
-    except subprocess.TimeoutExpired:
-        record["error"] = "yt-dlp-timeout-900s"
-        return record
-    except Exception as exc:
-        record["error"] = str(exc)[:200]
-        return record
-
-
-def handle_page_videos(video_urls: list[str], page_url: str,
-                       session: requests.Session, assets_dir: Path) -> list[dict]:
+def build_video_link_records(video_urls: list[str]) -> list[dict]:
     records: list[dict] = []
-    if VIDEOS_MODE == "off":
-        return records
     for url in video_urls:
         normalized = normalize(url)
-        if normalized in VIDEO_SEEN:
+        if normalized in VIDEO_LINKS_SEEN:
             continue
-        VIDEO_SEEN.add(normalized)
-        if Path(urlparse(url).path).suffix.lower() in VIDEO_EXTENSIONS:
-            records.append(download_direct_video(session, url, page_url, assets_dir))
-        elif PLATFORM_VIDEO_RE.search(url):
-            if VIDEOS_MODE == "all":
-                records.append(download_platform_video(url, assets_dir))
-            else:
-                records.append({"url": url, "kind": "platform", "status": "skipped",
-                                "local_path": "",
-                                "error": "platform-video-use---videos-all"})
+        VIDEO_LINKS_SEEN.add(normalized)
+        records.append(
+            {
+                "url": normalized,
+                "kind": classify_video_url(normalized),
+                "status": "detected",
+                "local_path": "",
+                "note": "download with z-video-downloader",
+            }
+        )
     return records
-
-
-def apply_videos_to_page(md_path: Path, videos: list[dict]) -> None:
-    if not videos or not md_path.exists():
-        return
-    text = md_path.read_text(encoding="utf-8")
-    for video in videos:
-        if video.get("status") == "ok" and video.get("kind") == "direct":
-            text = text.replace(f"({video['url']})", f"({video['local_path']})")
-    ok_videos = [v for v in videos if v.get("status") == "ok"]
-    if ok_videos:
-        lines = ["", "## 本页视频", ""]
-        for video in ok_videos:
-            name = Path(video["local_path"]).name
-            lines.append(f"- [{name}]({video['local_path']}) ← <{video['url']}>")
-        text = text.rstrip() + "\n" + "\n".join(lines) + "\n"
-    md_path.write_text(text, encoding="utf-8")
 
 
 # ---------------------------------------------------------------- GitHub 优先
@@ -712,7 +619,14 @@ def process_page(
     github_result = try_github_page(session, url, depth, out_dir, assets_dir, index,
                                     root_hosts, same_domain_only, global_image_index)
     if github_result is not None:
-        github_result.videos = []
+        page_videos: list[str] = []
+        for link in getattr(github_result, "links", []):
+            link_url = link.get("url", "")
+            if Path(urlparse(link_url).path).suffix.lower() in VIDEO_EXTENSIONS:
+                page_videos.append(link_url)
+            elif PLATFORM_VIDEO_RE.search(link_url):
+                page_videos.append(link_url)
+        github_result.videos = build_video_link_records(page_videos)
         return github_result
 
     direct = base.process_page(
@@ -720,17 +634,10 @@ def process_page(
         root_hosts, same_domain_only, global_image_index,
     )
     page_videos = list(CURRENT_PAGE_VIDEOS)
-    # 入口本身就是平台视频页或视频直链时，直接纳入下载候选
+    # 入口本身就是平台视频页或视频直链时，纳入媒体清单候选
     if PLATFORM_VIDEO_RE.search(url) or \
             Path(urlparse(url).path).suffix.lower() in VIDEO_EXTENSIONS:
         page_videos.insert(0, url)
-    # 正文链接里的直链视频与平台视频也纳入候选（含被 skip 的社交域名链接）
-    for link in getattr(direct, "links", []):
-        link_url = link.get("url", "")
-        if Path(urlparse(link_url).path).suffix.lower() in VIDEO_EXTENSIONS:
-            page_videos.append(link_url)
-        elif PLATFORM_VIDEO_RE.search(link_url):
-            page_videos.append(link_url)
 
     result = direct
     if use_jina:
@@ -749,14 +656,15 @@ def process_page(
                 direct_path.unlink()
             result = fallback
 
-    videos: list[dict] = []
-    # 页面抓取失败但入口是视频页时仍尝试下载视频
-    if VIDEOS_MODE != "off" and (result.status == "ok" or page_videos):
-        deduped = list(dict.fromkeys(page_videos))
-        videos = handle_page_videos(deduped, url, session, assets_dir)
-        if result.status == "ok":
-            apply_videos_to_page(out_dir / result.filename, videos)
-    result.videos = videos
+    # 正文链接里的直链视频与平台视频也纳入清单（含被 skip 的社交域名链接）
+    for link in getattr(result, "links", []) or []:
+        link_url = link.get("url", "")
+        if Path(urlparse(link_url).path).suffix.lower() in VIDEO_EXTENSIONS:
+            page_videos.append(link_url)
+        elif PLATFORM_VIDEO_RE.search(link_url):
+            page_videos.append(link_url)
+
+    result.videos = build_video_link_records(list(dict.fromkeys(page_videos)))
     return result
 
 
@@ -780,9 +688,11 @@ def write_media_inventory(out_dir: Path, title: str, pages: list) -> None:
     lines = [
         f"# Media Inventory: {title}",
         "",
-        "## Videos",
+        "## Video Links",
         "",
-        "| Status | Kind | Page | Local Path | Source URL | Note |",
+        "Video download is delegated to `z-video-downloader`. This file only records detected links.",
+        "",
+        "| Status | Kind | Page | Download Skill | Source URL | Note |",
         "| --- | --- | --- | --- | --- | --- |",
     ]
     has_video = False
@@ -795,13 +705,13 @@ def write_media_inventory(out_dir: Path, title: str, pages: list) -> None:
                     base._escape_table(video.get("status")),
                     base._escape_table(video.get("kind")),
                     base._escape_table(page.filename or page.url),
-                    base._escape_table(video.get("local_path")),
+                    "`z-video-downloader`",
                     base._escape_table(video.get("url")),
-                    base._escape_table(note),
+                    base._escape_table(video.get("note") or note),
                 ]) + " |"
             )
     if not has_video:
-        lines.append("| none | none | none | none | none | no videos found |")
+        lines.append("| none | none | none | none | none | no video links found |")
     out_dir.joinpath("04-media-inventory.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8")
 
@@ -809,9 +719,9 @@ def write_media_inventory(out_dir: Path, title: str, pages: list) -> None:
 # ---------------------------------------------------------------- 主流程
 
 def main() -> int:
-    global VIDEOS_MODE, MAX_VIDEO_MB, MAX_IMAGE_MB
+    global MAX_IMAGE_MB
     parser = argparse.ArgumentParser(
-        description="Collect body pages, body links, images and videos into a local writing material pack."
+        description="Collect body pages, body links, images and video links into a local writing material pack."
     )
     parser.add_argument("urls", nargs="+", help="Entry URLs")
     parser.add_argument("--out-root", default="Clippings/Reading")
@@ -821,21 +731,20 @@ def main() -> int:
     parser.add_argument("--same-domain-only", action="store_true")
     parser.add_argument("--delay", type=float, default=0.2)
     parser.add_argument("--no-jina", action="store_true", help="Disable r.jina.ai fallback")
-    parser.add_argument("--videos", choices=["off", "direct", "all"], default="direct",
-                        help="off=不下载视频; direct=只下载 <video>/直链(默认); all=平台视频也用 yt-dlp")
-    parser.add_argument("--max-video-mb", type=float, default=300.0)
     parser.add_argument("--max-image-mb", type=float, default=20.0)
-    parser.add_argument("--browser-cookies", default="",
-                        help="平台视频遇到登录/bot 验证时，从指定浏览器读取 cookie，"
-                             "如 chrome / safari / edge / firefox")
+    parser.add_argument("--videos", choices=["off", "direct", "all"], default="",
+                        help=argparse.SUPPRESS)
+    parser.add_argument("--max-video-mb", type=float, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--browser-cookies", default="", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    VIDEOS_MODE = args.videos
-    MAX_VIDEO_MB = args.max_video_mb
     MAX_IMAGE_MB = args.max_image_mb
-    BROWSER_COOKIES[0] = args.browser_cookies
-    if VIDEOS_MODE == "all" and not yt_dlp_available():
-        print("warning: --videos all 但未找到 yt-dlp，平台视频将记为失败", file=sys.stderr)
+    if args.videos or args.max_video_mb is not None or args.browser_cookies:
+        print(
+            "warning: video downloading moved to z-video-downloader; "
+            "z-web-pack records video links only",
+            file=sys.stderr,
+        )
 
     roots = [normalize(url) for url in args.urls]
     FORCE_ROOTS.clear()
@@ -897,15 +806,13 @@ def main() -> int:
     write_media_inventory(out_dir, title, pages)
     rewrite_generator_name(out_dir)
     jina_count = sum(1 for p in pages if "r.jina.ai" in p.final_url)
-    videos_ok = sum(
-        1 for p in pages for v in (getattr(p, "videos", []) or []) if v.get("status") == "ok"
-    )
+    videos_found = sum(1 for p in pages for _v in (getattr(p, "videos", []) or []))
     print(out_dir)
     print(f"pages_ok={sum(1 for p in pages if p.status == 'ok')}")
     print(f"main_ok={sum(1 for p in pages if p.status == 'ok' and p.role == 'MAIN')}")
     print(f"linked_ok={sum(1 for p in pages if p.status == 'ok' and p.role == 'LINKED')}")
     print(f"images_ok={sum(1 for p in pages for img in p.images if img.get('status') == 'ok')}")
-    print(f"videos_ok={videos_ok}")
+    print(f"videos_found={videos_found}")
     print(f"pages_failed_or_skipped={sum(1 for p in pages if p.status != 'ok')}")
     print(f"jina_fallback_pages={jina_count}")
     return 0
