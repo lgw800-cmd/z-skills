@@ -1,6 +1,6 @@
 # z-skills
 
-`z-skills` 是一组可复用的本地 Agent Skills，用来把常见工作流沉淀成稳定能力：网页素材采集、视频下载、视频学习网页、文档解析、邮件读取、表格处理、概念拆解，以及文章四格漫画配图
+`z-skills` 是一组可复用的本地 Agent Skills，用来把常见工作流沉淀成稳定能力：网页素材采集、视频下载、视频学习网页、文档解析、邮件读取、表格处理、Markdown 转 Word、概念拆解，以及文章四格漫画配图
 
 这些 skill 默认面向中文创作、知识管理和自动化任务，适合放到本地 `.agent/skills/` 或 Codex/Claude Code 等支持 Skills 的环境里使用
 
@@ -13,6 +13,7 @@
 | `z-video-study-webpage-qwen` | 用转录、关键帧和 Qwen 多模态分析视频，生成图文学习网页 | 理解视频内容、视频学习总结网页、关键知识点匹配画面 |
 | `z-smart-xparse` | 用 xparse-cli 把 PDF、图片、Office 等文档转成 Markdown 或结构化结果 | 解析 PDF、文档转 Markdown、读取扫描件 |
 | `z-mail-reader` | 通过 IMAP 读取邮件、下载附件、摘要邮件内容、监听新邮件 | 读邮件、查收邮件、邮件摘要、监听邮件 |
+| `z-md-to-word` | 把本地 Markdown 文章转换成 Word 文档，生成 `.docx` 和 `.doc` 并做打开检查 | 转成doc、Markdown转Word、md转doc、导出Word |
 | `z-md-excel` | 把 Markdown 里的表格提取成 Excel 文件 | Markdown 表格转 Excel、导出 MD 表格 |
 | `z-excel-editor` | 读取、编辑、清洗、格式化电子表格文件 | 修改 xlsx、清洗 csv、补公式、做表格 |
 | `z-father-concept` | 给任意词语或概念寻找父概念、上位概念和更深层解释 | 父概念、给这个词找爸爸、上位概念 |
@@ -72,7 +73,26 @@ cp -R z-* "/path/to/your/.agent/skills/"
 
 安装后，新会话开始时，Agent 会根据每个 `SKILL.md` 的 `name` 和 `description` 自动匹配触发词
 
-## 新增：熊猫四格漫画 Skill
+## 新增：Markdown 转 Word Skill
+
+`z-md-to-word` 用来把本地 Markdown 文章转换成 Word 文档，适合公众号文章、Obsidian 笔记、商单稿件和需要交付 `.doc` / `.docx` 的场景。
+
+它会自动处理几个常见问题：
+
+- 保留 Markdown 标题、作者和日期
+- 写入远程图片和本地图片
+- 跳过空上传占位符
+- 修正常见列表识别问题
+- 生成后检查文档是否能打开和渲染
+
+默认输出：
+
+```text
+output/doc/<原文件名>.docx
+output/doc/<原文件名>.doc
+```
+
+## 熊猫四格漫画 Skill
 
 `z-xkcd-panda-comic` 用来把文章或主题变成一张 2x2 四格漫画，默认风格是：
 
@@ -112,6 +132,11 @@ z-skills/
   z-xkcd-panda-comic/
     SKILL.md
     assets/
+    evals/
+  z-md-to-word/
+    SKILL.md
+    README.md
+    scripts/
     evals/
   z-video-downloader/
     SKILL.md

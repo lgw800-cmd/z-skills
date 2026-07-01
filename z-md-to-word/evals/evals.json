@@ -1,0 +1,17 @@
+{
+  "skill_name": "z-md-to-word",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "把 /path/to/article.md 转成 doc",
+      "expected_output": "Creates output/doc/article.docx and output/doc/article.doc, validates text, images, and renderability.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "这篇 Markdown 文章导出 Word，里面有远程图片和一个空上传占位符",
+      "expected_output": "Embeds valid images, skips the empty upload placeholder, keeps lists readable, and reports verified output paths.",
+      "files": []
+    }
+  ]
+}
